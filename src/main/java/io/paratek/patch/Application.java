@@ -1,13 +1,15 @@
 package io.paratek.patch;
 
 import com.google.common.flogger.FluentLogger;
-import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.tree.*;
+import jdk.internal.org.objectweb.asm.Opcodes;
+import jdk.internal.org.objectweb.asm.tree.AbstractInsnNode;
+import jdk.internal.org.objectweb.asm.tree.ClassNode;
+import jdk.internal.org.objectweb.asm.tree.FieldInsnNode;
+import jdk.internal.org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.List;
 import java.util.ListIterator;
 
 
@@ -30,10 +32,12 @@ public class Application {
     static {
         // Idk the registry key tbh
         final String homePath = System.getProperty("user.home");
-        if (new File(homePath + "\\jagexcache\\jagexlauncher\\bin").exists()) {
-            VIEWER_PATH = homePath + "\\jagexcache\\jagexlauncher\\bin\\";
-        } else {
-            VIEWER_PATH = homePath + "\\OneDrive\\jagexcache\\jagexlauncher\\bin\\";
+        if (System.getProperty("os.name").contains("win")) {
+            if (new File(homePath + "\\jagexcache\\jagexlauncher\\bin").exists()) {
+                VIEWER_PATH = homePath + "\\jagexcache\\jagexlauncher\\bin\\";
+            } else {
+                VIEWER_PATH = homePath + "\\OneDrive\\jagexcache\\jagexlauncher\\bin\\";
+            }
         }
     }
 
@@ -62,28 +66,25 @@ public class Application {
         // Load the jar
         final JarHandler handler = new JarHandler(VIEWER_PATH + "jagexappletviewer_original.jar");
 
-        // prune appletviewer
-        // This is no longer a supported client, I doubt this will ever be updated so there is no need to hook appletviewer.l or appletviewer.b
-        // appletviewer.l is true if os.name is Windows
-        // appletviewer.b is true if x64 or i686? I think, I forgot tho.
+        // remove the System.load call and replace it with a sysout so no instruction need to be cleaned up
         final ClassNode appletViewer = handler.getClassMap().get("app.appletviewer");
-        for (MethodNode methodNode : (List<MethodNode>) appletViewer.methods) {
-            final ListIterator<AbstractInsnNode> nodeListIterator = methodNode.instructions.iterator();
-            while (nodeListIterator.hasNext()) {
-                final AbstractInsnNode curr = nodeListIterator.next();
-                if (curr instanceof FieldInsnNode && ((FieldInsnNode) curr).owner.contains("appletviewer")
-                        && ((FieldInsnNode) curr).name.equals("l") && ((FieldInsnNode) curr).desc.equals("Z")
-                        && curr.getOpcode() == Opcodes.PUTSTATIC) {
-                    nodeListIterator.add(new InsnNode(Opcodes.ICONST_0));
-                    nodeListIterator.add(new FieldInsnNode(Opcodes.PUTSTATIC, ((FieldInsnNode) curr).owner, ((FieldInsnNode) curr).name, ((FieldInsnNode) curr).desc));
-                } else if (curr instanceof FieldInsnNode && ((FieldInsnNode) curr).owner.contains("appletviewer")
-                        && ((FieldInsnNode) curr).name.equals("b") && ((FieldInsnNode) curr).desc.equals("Z")
-                        && curr.getOpcode() == Opcodes.PUTSTATIC) {
-                    nodeListIterator.add(new InsnNode(Opcodes.ICONST_1));
-                    nodeListIterator.add(new FieldInsnNode(Opcodes.PUTSTATIC, ((FieldInsnNode) curr).owner, ((FieldInsnNode) curr).name, ((FieldInsnNode) curr).desc));
+        appletViewer.methods.forEach(methodNode -> {
+            for (ListIterator<AbstractInsnNode> it = methodNode.instructions.iterator(); it.hasNext(); ) {
+                AbstractInsnNode node = it.next();
+                if (node instanceof MethodInsnNode && ((MethodInsnNode) node).owner.equals("java/lang/System")
+                        && ((MethodInsnNode) node).name.equals("load")) {
+                    it.previous();
+                    it.previous();
+                    it.previous();
+                    it.add(new FieldInsnNode(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;"));
+                    it.next();
+                    it.next();
+                    it.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false));
+                    it.next();
+                    it.remove();
                 }
             }
-        }
+        });
 
         // Dump
         handler.dumpTo(VIEWER_PATH + APPLET);
